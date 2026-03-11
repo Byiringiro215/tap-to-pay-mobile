@@ -41,6 +41,58 @@ const userSchema = new mongoose.Schema({
 
 const User = mongoose.model('User', userSchema);
 
+// Initialize demo users
+async function initializeDemoUsers() {
+  try {
+    const adminExists = await User.findOne({ username: 'admin' });
+    const userExists = await User.findOne({ username: 'user' });
+    const managerExists = await User.findOne({ username: 'manager' });
+    const operatorExists = await User.findOne({ username: 'operator' });
+
+    if (!adminExists) {
+      const hashedPassword = await bcrypt.hash('admin123', 10);
+      await User.create({
+        username: 'admin',
+        password: hashedPassword,
+        role: 'admin'
+      });
+      console.log('✓ Demo admin user created: admin / admin123');
+    }
+
+    if (!userExists) {
+      const hashedPassword = await bcrypt.hash('user123', 10);
+      await User.create({
+        username: 'user',
+        password: hashedPassword,
+        role: 'user'
+      });
+      console.log('✓ Demo user created: user / user123');
+    }
+
+    if (!managerExists) {
+      const hashedPassword = await bcrypt.hash('manager123', 10);
+      await User.create({
+        username: 'manager',
+        password: hashedPassword,
+        role: 'admin'
+      });
+      console.log('✓ Demo manager user created: manager / manager123');
+    }
+
+    if (!operatorExists) {
+      const hashedPassword = await bcrypt.hash('operator123', 10);
+      await User.create({
+        username: 'operator',
+        password: hashedPassword,
+        role: 'user'
+      });
+      console.log('✓ Demo operator user created: operator / operator123');
+    }
+  } catch (err) {
+    console.error('Error initializing demo users:', err.message);
+  }
+}
+
 // Card Schema
 const cardSchema = new mongoose.Schema({
   uid: { type: String, required: true, unique: true },
@@ -664,7 +716,10 @@ io.on('connection', (socket) => {
   });
 });
 
-server.listen(PORT, '0.0.0.0', () => {
+server.listen(PORT, '0.0.0.0', async () => {
   console.log(`Backend server running on http://0.0.0.0:${PORT}`);
   console.log(`Access from: http://157.173.101.159:${PORT}`);
+  
+  // Initialize demo users
+  await initializeDemoUsers();
 });

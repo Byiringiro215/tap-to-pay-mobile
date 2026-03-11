@@ -96,8 +96,12 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 
 ### Demo Credentials
 
-- **Admin**: Password `admin123`
-- **User**: Password `user123`
+- **Admin**: 
+  - Username: `admin`, Password: `admin123`
+  - Username: `manager`, Password: `manager123`
+- **User**: 
+  - Username: `user`, Password: `user123`
+  - Username: `operator`, Password: `operator123`
 
 ### Features
 
@@ -213,10 +217,25 @@ curl -X POST http://localhost:8275/auth/register \
   -H "Content-Type: application/json" \
   -d '{"username":"admin","password":"admin123","role":"admin"}'
 
-# Login
+# Login with admin
 curl -X POST http://localhost:8275/auth/login \
   -H "Content-Type: application/json" \
   -d '{"username":"admin","password":"admin123"}'
+
+# Login with manager
+curl -X POST http://localhost:8275/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"manager","password":"manager123"}'
+
+# Login with user
+curl -X POST http://localhost:8275/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"user","password":"user123"}'
+
+# Login with operator
+curl -X POST http://localhost:8275/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"operator","password":"operator123"}'
 
 # Get Products (with token)
 curl -X GET http://localhost:8275/products \
