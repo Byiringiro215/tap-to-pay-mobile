@@ -3,7 +3,7 @@ const mqtt = require('mqtt');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
-const mongoose = require('mongoose');
+const { Pool } = require('pg');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 require('dotenv').config();
@@ -20,92 +20,124 @@ const io = new Server(server, {
 app.use(cors());
 app.use(express.json());
 
-const PORT = 8275;
-const TEAM_ID = "nexora_sonia";
-const MQTT_BROKER = "mqtt://157.173.101.159:1883";
-const MONGO_URI = process.env.MONGODB_URI;
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
-
-// MongoDB Connection
-mongoose.connect(MONGO_URI)
-  .then(() => console.log('Connected to MongoDB'))
-  .catch(err => console.error('MongoDB connection error:', err));
-
-// User Schema for Authentication
-const userSchema = new mongoose.Schema({
-  username: { type: String, required: true, unique: true },
-  password: { type: String, required: true },
-  role: { type: String, enum: ['admin', 'user'], default: 'user' },
-  createdAt: { type: Date, default: Date.now }
+// Request timeout middleware (30 seconds)
+app.use((req, res, next) => {
+  req.setTimeout(30000);
+  res.setTimeout(30000);
+  
+  // Log requests
+  const start = Date.now();
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.path} - ${res.statusCode} (${duration}ms)`);
+  });
+  
+  next();
 });
 
-const User = mongoose.model('User', userSchema);
+const PORT = process.env.PORT || 8275;
+const TEAM_ID = process.env.TEAM_ID || "nexora_sonia";
+const MQTT_BROKER = process.env.MQTT_BROKER || "mqtt://157.173.101.159:1883";
+const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
+
+// PostgreSQL Connection Pool - Optimized for Neon
+const pool = new Pool({
+  host: process.env.DB_HOST || 'localhost',
+  port: process.env.DB_PORT || 5432,
+  database: process.env.DB_NAME || 'tap_and_pay',
+  user: process.env.DB_USER || 'postgres',
+  password: process.env.DB_PASSWORD || 'password',
+  ssl: process.env.DB_SSL === 'require' ? { rejectUnauthorized: false } : false,
+  // Connection pool optimization
+  max: 20,                    // Maximum connections
+  idleTimeoutMillis: 30000,   // Close idle connections after 30s
+  connectionTimeoutMillis: 5000, // Connection timeout 5s
+  statement_timeout: 10000,   // Query timeout 10s
+});
+
+pool.on('error', (err) => {
+  console.error('Unexpected error on idle client', err);
+});
+
+// Initialize Database Tables
+async function initializeDatabase() {
+  try {
+    // Users table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        username VARCHAR(255) UNIQUE NOT NULL,
+        password VARCHAR(255) NOT NULL,
+        role VARCHAR(50) DEFAULT 'user',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Cards table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS cards (
+        id SERIAL PRIMARY KEY,
+        uid VARCHAR(255) UNIQUE NOT NULL,
+        holder_name VARCHAR(255) NOT NULL,
+        balance DECIMAL(10, 2) DEFAULT 0,
+        last_topup DECIMAL(10, 2) DEFAULT 0,
+        passcode VARCHAR(255),
+        passcode_set BOOLEAN DEFAULT FALSE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Transactions table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS transactions (
+        id SERIAL PRIMARY KEY,
+        uid VARCHAR(255) NOT NULL,
+        holder_name VARCHAR(255) NOT NULL,
+        type VARCHAR(50) NOT NULL,
+        amount DECIMAL(10, 2) NOT NULL,
+        balance_before DECIMAL(10, 2) NOT NULL,
+        balance_after DECIMAL(10, 2) NOT NULL,
+        description TEXT,
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (uid) REFERENCES cards(uid)
+      )
+    `);
+
+    console.log('✓ Database tables initialized');
+  } catch (err) {
+    console.error('Error initializing database:', err.message);
+  }
+}
 
 // Initialize demo users
 async function initializeDemoUsers() {
   try {
-    const adminExists = await User.findOne({ username: 'admin' });
-    const userExists = await User.findOne({ username: 'user' });
-    const managerExists = await User.findOne({ username: 'manager' });
-    const operatorExists = await User.findOne({ username: 'operator' });
+    const demoUsers = [
+      { username: 'admin', password: 'admin123', role: 'admin' },
+      { username: 'manager', password: 'manager123', role: 'admin' },
+      { username: 'user', password: 'user123', role: 'user' },
+      { username: 'operator', password: 'operator123', role: 'user' }
+    ];
 
-    if (!adminExists) {
-      const hashedPassword = await bcrypt.hash('admin123', 10);
-      await User.create({
-        username: 'admin',
-        password: hashedPassword,
-        role: 'admin'
-      });
-      console.log('✓ Demo admin user created: admin / admin123');
-    }
-
-    if (!userExists) {
-      const hashedPassword = await bcrypt.hash('user123', 10);
-      await User.create({
-        username: 'user',
-        password: hashedPassword,
-        role: 'user'
-      });
-      console.log('✓ Demo user created: user / user123');
-    }
-
-    if (!managerExists) {
-      const hashedPassword = await bcrypt.hash('manager123', 10);
-      await User.create({
-        username: 'manager',
-        password: hashedPassword,
-        role: 'admin'
-      });
-      console.log('✓ Demo manager user created: manager / manager123');
-    }
-
-    if (!operatorExists) {
-      const hashedPassword = await bcrypt.hash('operator123', 10);
-      await User.create({
-        username: 'operator',
-        password: hashedPassword,
-        role: 'user'
-      });
-      console.log('✓ Demo operator user created: operator / operator123');
+    for (const demoUser of demoUsers) {
+      const result = await pool.query('SELECT * FROM users WHERE username = $1', [demoUser.username]);
+      
+      if (result.rows.length === 0) {
+        const hashedPassword = await bcrypt.hash(demoUser.password, 10);
+        await pool.query(
+          'INSERT INTO users (username, password, role) VALUES ($1, $2, $3)',
+          [demoUser.username, hashedPassword, demoUser.role]
+        );
+        console.log(`✓ Demo user created: ${demoUser.username} / ${demoUser.password}`);
+      } else {
+        console.log(`✓ Demo user already exists: ${demoUser.username}`);
+      }
     }
   } catch (err) {
     console.error('Error initializing demo users:', err.message);
   }
 }
-
-// Card Schema
-const cardSchema = new mongoose.Schema({
-  uid: { type: String, required: true, unique: true },
-  holderName: { type: String, required: true },
-  balance: { type: Number, default: 0 },
-  lastTopup: { type: Number, default: 0 },
-  passcode: { type: String, default: null }, // 6-digit passcode (hashed)
-  passcodeSet: { type: Boolean, default: false },
-  createdAt: { type: Date, default: Date.now },
-  updatedAt: { type: Date, default: Date.now }
-});
-
-const Card = mongoose.model('Card', cardSchema);
 
 // Authentication Middleware
 const authenticateToken = (req, res, next) => {
@@ -145,21 +177,7 @@ async function verifyPasscode(inputPasscode, hashedPasscode) {
   return await bcrypt.compare(inputPasscode, hashedPasscode);
 }
 
-// Transaction Schema
-const transactionSchema = new mongoose.Schema({
-  uid: { type: String, required: true, index: true },
-  holderName: { type: String, required: true },
-  type: { type: String, enum: ['topup', 'debit'], default: 'topup' },
-  amount: { type: Number, required: true },
-  balanceBefore: { type: Number, required: true },
-  balanceAfter: { type: Number, required: true },
-  description: { type: String },
-  timestamp: { type: Date, default: Date.now }
-});
-
-const Transaction = mongoose.model('Transaction', transactionSchema);
-
-// Product catalog with categories
+// Product catalog
 const PRODUCTS = [
   // Food & Beverages
   { id: 'coffee', name: 'Coffee', price: 2.50, icon: '☕', category: 'food' },
@@ -170,7 +188,7 @@ const PRODUCTS = [
   { id: 'salad', name: 'Salad Bowl', price: 6.00, icon: '🥗', category: 'food' },
   
   // Rwandan Local Foods
-  { id: 'brochette', name: 'Brochette', price: 4.00, icon: '�串', category: 'rwandan' },
+  { id: 'brochette', name: 'Brochette', price: 4.00, icon: '串', category: 'rwandan' },
   { id: 'isombe', name: 'Isombe', price: 3.50, icon: '🥬', category: 'rwandan' },
   { id: 'ubugari', name: 'Ubugari', price: 2.00, icon: '🍚', category: 'rwandan' },
   { id: 'sambaza', name: 'Sambaza (Fried)', price: 3.00, icon: '🐟', category: 'rwandan' },
@@ -205,7 +223,7 @@ const PRODUCTS = [
   { id: 'email-pro', name: 'Professional Email', price: 8.00, icon: '📧', category: 'services' }
 ];
 
-// Topics
+// MQTT Topics
 const TOPIC_STATUS = `rfid/${TEAM_ID}/card/status`;
 const TOPIC_BALANCE = `rfid/${TEAM_ID}/card/balance`;
 const TOPIC_TOPUP = `rfid/${TEAM_ID}/card/topup`;
@@ -216,7 +234,7 @@ const TOPIC_REMOVED = `rfid/${TEAM_ID}/card/removed`;
 const mqttClient = mqtt.connect(MQTT_BROKER);
 
 mqttClient.on('connect', () => {
-  console.log('Connected to MQTT Broker');
+  console.log('✓ Connected to MQTT Broker');
   mqttClient.subscribe(TOPIC_STATUS);
   mqttClient.subscribe(TOPIC_BALANCE);
   mqttClient.subscribe(TOPIC_PAYMENT);
@@ -242,7 +260,14 @@ mqttClient.on('message', (topic, message) => {
   }
 });
 
-// HTTP Endpoints
+// Health Check Endpoint
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime()
+  });
+});
 
 // Authentication Endpoints
 app.post('/auth/register', async (req, res) => {
@@ -253,32 +278,61 @@ app.post('/auth/register', async (req, res) => {
   }
 
   try {
-    const existingUser = await User.findOne({ username });
-    if (existingUser) {
+    const result = await pool.query('SELECT * FROM users WHERE username = $1', [username]);
+    if (result.rows.length > 0) {
       return res.status(400).json({ error: 'Username already exists' });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
-    const user = new User({
-      username,
-      password: hashedPassword,
-      role: role || 'user'
-    });
-
-    await user.save();
+    const newUser = await pool.query(
+      'INSERT INTO users (username, password, role) VALUES ($1, $2, $3) RETURNING id, username, role',
+      [username, hashedPassword, role || 'user']
+    );
 
     res.status(201).json({
       success: true,
       message: 'User registered successfully',
       user: {
-        id: user._id,
-        username: user.username,
-        role: user.role
+        id: newUser.rows[0].id,
+        username: newUser.rows[0].username,
+        role: newUser.rows[0].role
       }
     });
   } catch (err) {
     console.error('Registration error:', err);
     res.status(500).json({ error: 'Registration failed' });
+  }
+});
+
+// Seed demo users endpoint
+app.post('/auth/seed', async (req, res) => {
+  try {
+    await initializeDemoUsers();
+    
+    const result = await pool.query('SELECT id, username, role FROM users');
+    res.json({
+      success: true,
+      message: 'Demo users seeded successfully',
+      users: result.rows
+    });
+  } catch (err) {
+    console.error('Seed error:', err);
+    res.status(500).json({ error: 'Seeding failed' });
+  }
+});
+
+// Debug endpoint to check users
+app.get('/auth/users', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT id, username, role FROM users');
+    res.json({
+      success: true,
+      count: result.rows.length,
+      users: result.rows
+    });
+  } catch (err) {
+    console.error('Error fetching users:', err);
+    res.status(500).json({ error: 'Failed to fetch users' });
   }
 });
 
@@ -290,32 +344,41 @@ app.post('/auth/login', async (req, res) => {
   }
 
   try {
-    const user = await User.findOne({ username });
-    if (!user) {
-      return res.status(401).json({ error: 'Invalid username or password' });
-    }
-
-    const isPasswordValid = await bcrypt.compare(password, user.password);
-    if (!isPasswordValid) {
-      return res.status(401).json({ error: 'Invalid username or password' });
-    }
-
-    const token = jwt.sign(
-      { id: user._id, username: user.username, role: user.role },
-      JWT_SECRET,
-      { expiresIn: '24h' }
-    );
-
-    res.json({
-      success: true,
-      message: 'Login successful',
-      token,
-      user: {
-        id: user._id,
-        username: user.username,
-        role: user.role
+    // Set query timeout
+    const client = await pool.connect();
+    try {
+      // Use a faster query with timeout
+      const result = await client.query('SELECT id, username, password, role FROM users WHERE username = $1 LIMIT 1', [username]);
+      
+      if (result.rows.length === 0) {
+        return res.status(401).json({ error: 'Invalid username or password' });
       }
-    });
+
+      const user = result.rows[0];
+      const isPasswordValid = await bcrypt.compare(password, user.password);
+      if (!isPasswordValid) {
+        return res.status(401).json({ error: 'Invalid username or password' });
+      }
+
+      const token = jwt.sign(
+        { id: user.id, username: user.username, role: user.role },
+        JWT_SECRET,
+        { expiresIn: '24h' }
+      );
+
+      res.json({
+        success: true,
+        message: 'Login successful',
+        token,
+        user: {
+          id: user.id,
+          username: user.username,
+          role: user.role
+        }
+      });
+    } finally {
+      client.release();
+    }
   } catch (err) {
     console.error('Login error:', err);
     res.status(500).json({ error: 'Login failed' });
@@ -331,85 +394,63 @@ app.post('/topup', authenticateToken, authorizeRole(['admin', 'user']), async (r
   }
 
   try {
-    // Find or create card
-    let card = await Card.findOne({ uid });
-    const balanceBefore = card ? card.balance : 0;
+    let card = await pool.query('SELECT * FROM cards WHERE uid = $1', [uid]);
+    const balanceBefore = card.rows.length > 0 ? parseFloat(card.rows[0].balance) : 0;
 
-    if (!card) {
+    if (card.rows.length === 0) {
       if (!holderName) {
         return res.status(400).json({ error: 'Holder name is required for new cards' });
       }
       
-      // For new cards, passcode is required
       if (!passcode || !/^\d{6}$/.test(passcode)) {
         return res.status(400).json({ error: 'A 6-digit passcode is required for new cards' });
       }
       
-      // Hash the passcode
       const hashedPasscode = await hashPasscode(passcode);
       
-      card = new Card({ 
-        uid, 
-        holderName, 
-        balance: amount, 
-        lastTopup: amount,
-        passcode: hashedPasscode,
-        passcodeSet: true
-      });
+      card = await pool.query(
+        'INSERT INTO cards (uid, holder_name, balance, last_topup, passcode, passcode_set) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
+        [uid, holderName, amount, amount, hashedPasscode, true]
+      );
     } else {
-      // Cumulative topup: add to existing balance
-      card.balance += amount;
-      card.lastTopup = amount;
-      card.updatedAt = Date.now();
+      card = await pool.query(
+        'UPDATE cards SET balance = balance + $1, last_topup = $2, updated_at = CURRENT_TIMESTAMP WHERE uid = $3 RETURNING *',
+        [amount, amount, uid]
+      );
     }
 
-    await card.save();
+    const cardData = card.rows[0];
 
     // Create transaction record
-    const transaction = new Transaction({
-      uid: card.uid,
-      holderName: card.holderName,
-      type: 'topup',
-      amount: amount,
-      balanceBefore: balanceBefore,
-      balanceAfter: card.balance,
-      description: `Top-up of $${amount.toFixed(2)}`
-    });
-    await transaction.save();
+    await pool.query(
+      'INSERT INTO transactions (uid, holder_name, type, amount, balance_before, balance_after, description) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+      [uid, cardData.holder_name, 'topup', amount, balanceBefore, parseFloat(cardData.balance), `Top-up of ${amount.toFixed(2)}`]
+    );
 
-    // Publish to MQTT with updated balance
-    const payload = JSON.stringify({ uid, amount: card.balance });
+    // Publish to MQTT
+    const payload = JSON.stringify({ uid, amount: parseFloat(cardData.balance) });
     mqttClient.publish(TOPIC_TOPUP, payload, (err) => {
       if (err) {
         console.error('Failed to publish topup:', err);
-        return res.status(500).json({ error: 'Failed to publish topup command' });
       }
-      console.log(`Published topup for ${uid} (${card.holderName}): ${card.balance}`);
     });
 
     res.json({
       success: true,
       message: 'Topup successful',
       card: {
-        uid: card.uid,
-        holderName: card.holderName,
-        balance: card.balance,
-        lastTopup: card.lastTopup
-      },
-      transaction: {
-        id: transaction._id,
-        amount: transaction.amount,
-        balanceAfter: transaction.balanceAfter,
-        timestamp: transaction.timestamp
+        uid: cardData.uid,
+        holderName: cardData.holder_name,
+        balance: parseFloat(cardData.balance),
+        lastTopup: parseFloat(cardData.last_topup)
       }
     });
   } catch (err) {
-    console.error('Database error:', err);
-    res.status(500).json({ error: 'Database operation failed' });
+    console.error('Topup error:', err);
+    res.status(500).json({ error: 'Topup failed' });
   }
 });
 
-// Payment / Debit endpoint
 app.post('/pay', authenticateToken, authorizeRole(['admin', 'user']), async (req, res) => {
   const { uid, productId, amount, description, passcode } = req.body;
 
@@ -418,14 +459,14 @@ app.post('/pay', authenticateToken, authorizeRole(['admin', 'user']), async (req
   }
 
   try {
-    // Find card first to check passcode requirement
-    const card = await Card.findOne({ uid });
-    if (!card) {
+    const cardResult = await pool.query('SELECT * FROM cards WHERE uid = $1', [uid]);
+    if (cardResult.rows.length === 0) {
       return res.status(404).json({ error: 'Card not found. Please top up first.' });
     }
     
-    // Verify passcode if set
-    if (card.passcodeSet) {
+    const card = cardResult.rows[0];
+    
+    if (card.passcode_set) {
       if (!passcode) {
         return res.status(401).json({ 
           error: 'Passcode required for this card',
@@ -442,7 +483,6 @@ app.post('/pay', authenticateToken, authorizeRole(['admin', 'user']), async (req
       }
     }
     
-    // Resolve amount from product catalog or use direct amount
     let payAmount = amount;
     let payDescription = description || 'Payment';
 
@@ -459,77 +499,54 @@ app.post('/pay', authenticateToken, authorizeRole(['admin', 'user']), async (req
       return res.status(400).json({ error: 'Invalid payment amount' });
     }
 
-    // Check sufficient balance
-    if (card.balance < payAmount) {
+    if (parseFloat(card.balance) < payAmount) {
       return res.status(400).json({
         error: 'Insufficient balance',
-        currentBalance: card.balance,
+        currentBalance: parseFloat(card.balance),
         required: payAmount,
-        shortfall: payAmount - card.balance
+        shortfall: payAmount - parseFloat(card.balance)
       });
     }
 
-    const balanceBefore = card.balance;
+    const balanceBefore = parseFloat(card.balance);
 
-    // Deduct amount
-    card.balance -= payAmount;
-    card.updatedAt = Date.now();
-    await card.save();
+    const updatedCard = await pool.query(
+      'UPDATE cards SET balance = balance - $1, updated_at = CURRENT_TIMESTAMP WHERE uid = $2 RETURNING *',
+      [payAmount, uid]
+    );
 
-    // Create transaction record
-    const transaction = new Transaction({
-      uid: card.uid,
-      holderName: card.holderName,
-      type: 'debit',
-      amount: payAmount,
-      balanceBefore: balanceBefore,
-      balanceAfter: card.balance,
-      description: payDescription
-    });
-    await transaction.save();
+    const cardData = updatedCard.rows[0];
 
-    // Publish to MQTT so ESP8266 updates
+    await pool.query(
+      'INSERT INTO transactions (uid, holder_name, type, amount, balance_before, balance_after, description) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+      [uid, cardData.holder_name, 'debit', payAmount, balanceBefore, parseFloat(cardData.balance), payDescription]
+    );
+
     const payload = JSON.stringify({
       uid,
-      amount: card.balance,
+      amount: parseFloat(cardData.balance),
       deducted: payAmount,
       description: payDescription,
       status: 'success'
     });
-    mqttClient.publish(TOPIC_PAYMENT, payload, (err) => {
-      if (err) {
-        console.error('Failed to publish payment:', err);
-      }
-      console.log(`Published payment for ${uid} (${card.holderName}): -$${payAmount.toFixed(2)}, balance: $${card.balance.toFixed(2)}`);
-    });
+    mqttClient.publish(TOPIC_PAYMENT, payload);
 
-    // Emit real-time update via WebSocket
     io.emit('payment-success', {
-      uid: card.uid,
-      holderName: card.holderName,
+      uid: cardData.uid,
+      holderName: cardData.holder_name,
       amount: payAmount,
       balanceBefore,
-      balanceAfter: card.balance,
-      description: payDescription,
-      timestamp: transaction.timestamp
+      balanceAfter: parseFloat(cardData.balance),
+      description: payDescription
     });
 
     res.json({
       success: true,
       message: 'Payment successful',
       card: {
-        uid: card.uid,
-        holderName: card.holderName,
-        balance: card.balance
-      },
-      transaction: {
-        id: transaction._id,
-        type: 'debit',
-        amount: payAmount,
-        balanceBefore,
-        balanceAfter: card.balance,
-        description: payDescription,
-        timestamp: transaction.timestamp
+        uid: cardData.uid,
+        holderName: cardData.holder_name,
+        balance: parseFloat(cardData.balance)
       }
     });
   } catch (err) {
@@ -538,12 +555,93 @@ app.post('/pay', authenticateToken, authorizeRole(['admin', 'user']), async (req
   }
 });
 
-// Products catalog endpoint
 app.get('/products', authenticateToken, (req, res) => {
   res.json(PRODUCTS);
 });
 
-// Set passcode for a card
+app.get('/card/:uid', authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM cards WHERE uid = $1', [req.params.uid]);
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Card not found' });
+    }
+    const card = result.rows[0];
+    res.json({
+      uid: card.uid,
+      holderName: card.holder_name,
+      balance: parseFloat(card.balance),
+      passcodeSet: card.passcode_set
+    });
+  } catch (err) {
+    console.error('Database error:', err);
+    res.status(500).json({ error: 'Database operation failed' });
+  }
+});
+
+app.get('/cards', authenticateToken, authorizeRole(['admin']), async (req, res) => {
+  try {
+    const result = await pool.query('SELECT uid, holder_name, balance, passcode_set, updated_at FROM cards ORDER BY updated_at DESC');
+    const cards = result.rows.map(card => ({
+      uid: card.uid,
+      holderName: card.holder_name,
+      balance: parseFloat(card.balance),
+      passcodeSet: card.passcode_set,
+      updatedAt: card.updated_at
+    }));
+    res.json(cards);
+  } catch (err) {
+    console.error('Database error:', err);
+    res.status(500).json({ error: 'Database operation failed' });
+  }
+});
+
+app.get('/transactions/:uid', authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM transactions WHERE uid = $1 ORDER BY timestamp DESC LIMIT 50',
+      [req.params.uid]
+    );
+    const transactions = result.rows.map(tx => ({
+      _id: tx.id,
+      uid: tx.uid,
+      holderName: tx.holder_name,
+      type: tx.type,
+      amount: parseFloat(tx.amount),
+      balanceAfter: parseFloat(tx.balance_after),
+      description: tx.description,
+      timestamp: tx.timestamp
+    }));
+    res.json(transactions);
+  } catch (err) {
+    console.error('Database error:', err);
+    res.status(500).json({ error: 'Database operation failed' });
+  }
+});
+
+app.get('/transactions', authenticateToken, authorizeRole(['admin']), async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 100;
+    const result = await pool.query(
+      'SELECT * FROM transactions ORDER BY timestamp DESC LIMIT $1',
+      [limit]
+    );
+    const transactions = result.rows.map(tx => ({
+      _id: tx.id,
+      uid: tx.uid,
+      holderName: tx.holder_name,
+      type: tx.type,
+      amount: parseFloat(tx.amount),
+      balanceAfter: parseFloat(tx.balance_after),
+      description: tx.description,
+      timestamp: tx.timestamp
+    }));
+    res.json(transactions);
+  } catch (err) {
+    console.error('Database error:', err);
+    res.status(500).json({ error: 'Database operation failed' });
+  }
+});
+
 app.post('/card/:uid/set-passcode', authenticateToken, async (req, res) => {
   const { passcode } = req.body;
   
@@ -552,19 +650,21 @@ app.post('/card/:uid/set-passcode', authenticateToken, async (req, res) => {
   }
   
   try {
-    const card = await Card.findOne({ uid: req.params.uid });
-    if (!card) {
+    const result = await pool.query('SELECT * FROM cards WHERE uid = $1', [req.params.uid]);
+    if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Card not found' });
     }
     
-    if (card.passcodeSet) {
+    const card = result.rows[0];
+    if (card.passcode_set) {
       return res.status(400).json({ error: 'Passcode already set. Use change-passcode endpoint to update.' });
     }
     
-    card.passcode = await hashPasscode(passcode);
-    card.passcodeSet = true;
-    card.updatedAt = Date.now();
-    await card.save();
+    const hashedPasscode = await hashPasscode(passcode);
+    await pool.query(
+      'UPDATE cards SET passcode = $1, passcode_set = true, updated_at = CURRENT_TIMESTAMP WHERE uid = $2',
+      [hashedPasscode, req.params.uid]
+    );
     
     res.json({ 
       success: true, 
@@ -577,7 +677,6 @@ app.post('/card/:uid/set-passcode', authenticateToken, async (req, res) => {
   }
 });
 
-// Change passcode (requires old passcode)
 app.post('/card/:uid/change-passcode', authenticateToken, async (req, res) => {
   const { oldPasscode, newPasscode } = req.body;
   
@@ -590,12 +689,13 @@ app.post('/card/:uid/change-passcode', authenticateToken, async (req, res) => {
   }
   
   try {
-    const card = await Card.findOne({ uid: req.params.uid });
-    if (!card) {
+    const result = await pool.query('SELECT * FROM cards WHERE uid = $1', [req.params.uid]);
+    if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Card not found' });
     }
     
-    if (!card.passcodeSet) {
+    const card = result.rows[0];
+    if (!card.passcode_set) {
       return res.status(400).json({ error: 'No passcode set. Use set-passcode endpoint first.' });
     }
     
@@ -604,9 +704,11 @@ app.post('/card/:uid/change-passcode', authenticateToken, async (req, res) => {
       return res.status(401).json({ error: 'Incorrect old passcode' });
     }
     
-    card.passcode = await hashPasscode(newPasscode);
-    card.updatedAt = Date.now();
-    await card.save();
+    const hashedPasscode = await hashPasscode(newPasscode);
+    await pool.query(
+      'UPDATE cards SET passcode = $1, updated_at = CURRENT_TIMESTAMP WHERE uid = $2',
+      [hashedPasscode, req.params.uid]
+    );
     
     res.json({ 
       success: true, 
@@ -618,7 +720,6 @@ app.post('/card/:uid/change-passcode', authenticateToken, async (req, res) => {
   }
 });
 
-// Verify passcode
 app.post('/card/:uid/verify-passcode', authenticateToken, async (req, res) => {
   const { passcode } = req.body;
   
@@ -627,12 +728,13 @@ app.post('/card/:uid/verify-passcode', authenticateToken, async (req, res) => {
   }
   
   try {
-    const card = await Card.findOne({ uid: req.params.uid });
-    if (!card) {
+    const result = await pool.query('SELECT * FROM cards WHERE uid = $1', [req.params.uid]);
+    if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Card not found', valid: false });
     }
     
-    if (!card.passcodeSet) {
+    const card = result.rows[0];
+    if (!card.passcode_set) {
       return res.status(400).json({ error: 'No passcode set for this card', valid: false });
     }
     
@@ -656,58 +758,6 @@ app.post('/card/:uid/verify-passcode', authenticateToken, async (req, res) => {
   }
 });
 
-// Get card details
-app.get('/card/:uid', authenticateToken, async (req, res) => {
-  try {
-    const card = await Card.findOne({ uid: req.params.uid });
-    if (!card) {
-      return res.status(404).json({ error: 'Card not found' });
-    }
-    res.json(card);
-  } catch (err) {
-    console.error('Database error:', err);
-    res.status(500).json({ error: 'Database operation failed' });
-  }
-});
-
-// Get all cards
-app.get('/cards', authenticateToken, authorizeRole(['admin']), async (req, res) => {
-  try {
-    const cards = await Card.find().sort({ updatedAt: -1 });
-    res.json(cards);
-  } catch (err) {
-    console.error('Database error:', err);
-    res.status(500).json({ error: 'Database operation failed' });
-  }
-});
-
-// Get transaction history for a specific card
-app.get('/transactions/:uid', authenticateToken, async (req, res) => {
-  try {
-    const transactions = await Transaction.find({ uid: req.params.uid })
-      .sort({ timestamp: -1 })
-      .limit(50); // Limit to last 50 transactions
-    res.json(transactions);
-  } catch (err) {
-    console.error('Database error:', err);
-    res.status(500).json({ error: 'Database operation failed' });
-  }
-});
-
-// Get all transactions (optional - for admin view)
-app.get('/transactions', authenticateToken, authorizeRole(['admin']), async (req, res) => {
-  try {
-    const limit = parseInt(req.query.limit) || 100;
-    const transactions = await Transaction.find()
-      .sort({ timestamp: -1 })
-      .limit(limit);
-    res.json(transactions);
-  } catch (err) {
-    console.error('Database error:', err);
-    res.status(500).json({ error: 'Database operation failed' });
-  }
-});
-
 // Socket connectivity
 io.on('connection', (socket) => {
   console.log('User connected to the dashboard');
@@ -716,10 +766,12 @@ io.on('connection', (socket) => {
   });
 });
 
+// Start server
 server.listen(PORT, '0.0.0.0', async () => {
   console.log(`Backend server running on http://0.0.0.0:${PORT}`);
   console.log(`Access from: http://157.173.101.159:${PORT}`);
   
-  // Initialize demo users
+  // Initialize database and demo users
+  await initializeDatabase();
   await initializeDemoUsers();
 });
