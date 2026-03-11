@@ -5,6 +5,7 @@ const { Server } = require('socket.io');
 const cors = require('cors');
 const mongoose = require('mongoose');
 const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
 require('dotenv').config();
 
 const app = express();
@@ -23,11 +24,22 @@ const PORT = 8275;
 const TEAM_ID = "nexora_sonia";
 const MQTT_BROKER = "mqtt://157.173.101.159:1883";
 const MONGO_URI = process.env.MONGODB_URI;
+const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
 
 // MongoDB Connection
 mongoose.connect(MONGO_URI)
   .then(() => console.log('Connected to MongoDB'))
   .catch(err => console.error('MongoDB connection error:', err));
+
+// User Schema for Authentication
+const userSchema = new mongoose.Schema({
+  username: { type: String, required: true, unique: true },
+  password: { type: String, required: true },
+  role: { type: String, enum: ['admin', 'user'], default: 'user' },
+  createdAt: { type: Date, default: Date.now }
+});
+
+const User = mongoose.model('User', userSchema);
 
 // Card Schema
 const cardSchema = new mongoose.Schema({
@@ -42,6 +54,34 @@ const cardSchema = new mongoose.Schema({
 });
 
 const Card = mongoose.model('Card', cardSchema);
+
+// Authentication Middleware
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (!token) {
+    return res.status(401).json({ error: 'Access token required' });
+  }
+
+  jwt.verify(token, JWT_SECRET, (err, user) => {
+    if (err) {
+      return res.status(403).json({ error: 'Invalid or expired token' });
+    }
+    req.user = user;
+    next();
+  });
+};
+
+// Role-based Authorization Middleware
+const authorizeRole = (allowedRoles) => {
+  return (req, res, next) => {
+    if (!allowedRoles.includes(req.user.role)) {
+      return res.status(403).json({ error: 'Insufficient permissions' });
+    }
+    next();
+  };
+};
 
 // Passcode helper functions
 async function hashPasscode(passcode) {
@@ -151,7 +191,87 @@ mqttClient.on('message', (topic, message) => {
 });
 
 // HTTP Endpoints
-app.post('/topup', async (req, res) => {
+
+// Authentication Endpoints
+app.post('/auth/register', async (req, res) => {
+  const { username, password, role } = req.body;
+
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Username and password are required' });
+  }
+
+  try {
+    const existingUser = await User.findOne({ username });
+    if (existingUser) {
+      return res.status(400).json({ error: 'Username already exists' });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const user = new User({
+      username,
+      password: hashedPassword,
+      role: role || 'user'
+    });
+
+    await user.save();
+
+    res.status(201).json({
+      success: true,
+      message: 'User registered successfully',
+      user: {
+        id: user._id,
+        username: user.username,
+        role: user.role
+      }
+    });
+  } catch (err) {
+    console.error('Registration error:', err);
+    res.status(500).json({ error: 'Registration failed' });
+  }
+});
+
+app.post('/auth/login', async (req, res) => {
+  const { username, password } = req.body;
+
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Username and password are required' });
+  }
+
+  try {
+    const user = await User.findOne({ username });
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid username or password' });
+    }
+
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+    if (!isPasswordValid) {
+      return res.status(401).json({ error: 'Invalid username or password' });
+    }
+
+    const token = jwt.sign(
+      { id: user._id, username: user.username, role: user.role },
+      JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    res.json({
+      success: true,
+      message: 'Login successful',
+      token,
+      user: {
+        id: user._id,
+        username: user.username,
+        role: user.role
+      }
+    });
+  } catch (err) {
+    console.error('Login error:', err);
+    res.status(500).json({ error: 'Login failed' });
+  }
+});
+
+// Protected Endpoints
+app.post('/topup', authenticateToken, authorizeRole(['admin', 'user']), async (req, res) => {
   const { uid, amount, holderName, passcode } = req.body;
 
   if (!uid || amount === undefined) {
@@ -238,7 +358,7 @@ app.post('/topup', async (req, res) => {
 });
 
 // Payment / Debit endpoint
-app.post('/pay', async (req, res) => {
+app.post('/pay', authenticateToken, authorizeRole(['admin', 'user']), async (req, res) => {
   const { uid, productId, amount, description, passcode } = req.body;
 
   if (!uid || (!productId && amount === undefined)) {
@@ -367,12 +487,12 @@ app.post('/pay', async (req, res) => {
 });
 
 // Products catalog endpoint
-app.get('/products', (req, res) => {
+app.get('/products', authenticateToken, (req, res) => {
   res.json(PRODUCTS);
 });
 
 // Set passcode for a card
-app.post('/card/:uid/set-passcode', async (req, res) => {
+app.post('/card/:uid/set-passcode', authenticateToken, async (req, res) => {
   const { passcode } = req.body;
   
   if (!passcode || !/^\d{6}$/.test(passcode)) {
@@ -406,7 +526,7 @@ app.post('/card/:uid/set-passcode', async (req, res) => {
 });
 
 // Change passcode (requires old passcode)
-app.post('/card/:uid/change-passcode', async (req, res) => {
+app.post('/card/:uid/change-passcode', authenticateToken, async (req, res) => {
   const { oldPasscode, newPasscode } = req.body;
   
   if (!oldPasscode || !newPasscode) {
@@ -447,7 +567,7 @@ app.post('/card/:uid/change-passcode', async (req, res) => {
 });
 
 // Verify passcode
-app.post('/card/:uid/verify-passcode', async (req, res) => {
+app.post('/card/:uid/verify-passcode', authenticateToken, async (req, res) => {
   const { passcode } = req.body;
   
   if (!passcode || !/^\d{6}$/.test(passcode)) {
@@ -485,7 +605,7 @@ app.post('/card/:uid/verify-passcode', async (req, res) => {
 });
 
 // Get card details
-app.get('/card/:uid', async (req, res) => {
+app.get('/card/:uid', authenticateToken, async (req, res) => {
   try {
     const card = await Card.findOne({ uid: req.params.uid });
     if (!card) {
@@ -499,7 +619,7 @@ app.get('/card/:uid', async (req, res) => {
 });
 
 // Get all cards
-app.get('/cards', async (req, res) => {
+app.get('/cards', authenticateToken, authorizeRole(['admin']), async (req, res) => {
   try {
     const cards = await Card.find().sort({ updatedAt: -1 });
     res.json(cards);
@@ -510,7 +630,7 @@ app.get('/cards', async (req, res) => {
 });
 
 // Get transaction history for a specific card
-app.get('/transactions/:uid', async (req, res) => {
+app.get('/transactions/:uid', authenticateToken, async (req, res) => {
   try {
     const transactions = await Transaction.find({ uid: req.params.uid })
       .sort({ timestamp: -1 })
@@ -523,7 +643,7 @@ app.get('/transactions/:uid', async (req, res) => {
 });
 
 // Get all transactions (optional - for admin view)
-app.get('/transactions', async (req, res) => {
+app.get('/transactions', authenticateToken, authorizeRole(['admin']), async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 100;
     const transactions = await Transaction.find()
