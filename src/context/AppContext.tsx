@@ -138,9 +138,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const graceTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
     // Helper function for fetch with timeout
-    const fetchWithTimeout = async (url: string, options: any = {}, timeoutMs: number = 30000) => {
+    const fetchWithTimeout = async (url: string, options: any = {}, timeoutMs: number = 60000) => {
+        console.log(`[API] Fetching: ${options.method || 'GET'} ${url}`);
+        const startTime = Date.now();
+        
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+        const timeoutId = setTimeout(() => {
+            console.log(`[API] Timeout after ${timeoutMs}ms for ${url}`);
+            controller.abort();
+        }, timeoutMs);
         
         try {
             const response = await fetch(url, {
@@ -148,9 +154,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
                 signal: controller.signal,
             });
             clearTimeout(timeoutId);
+            const duration = Date.now() - startTime;
+            console.log(`[API] Response: ${response.status} in ${duration}ms for ${url}`);
             return response;
         } catch (error) {
             clearTimeout(timeoutId);
+            const duration = Date.now() - startTime;
+            console.error(`[API] Error after ${duration}ms for ${url}:`, error instanceof Error ? error.message : String(error));
             throw error;
         }
     };
@@ -263,22 +273,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     // Socket setup
     useEffect(() => {
+        console.log('[Socket] Connecting to:', BACKEND_URL);
         const socket = io(BACKEND_URL);
         socketRef.current = socket;
 
         socket.on('connect', () => {
+            console.log('[Socket] Connected successfully');
             setState(s => ({
                 ...s,
                 isConnected: true,
                 backendStatus: true,
                 mqttStatus: true,
             }));
-            refreshStats();
-            refreshProducts();
-            refreshHistory();
+            // Temporarily disabled to avoid timeout on app start
+            // These will be loaded on-demand when user navigates to screens
+            // refreshStats();
+            // refreshProducts();
+            // refreshHistory();
         });
 
         socket.on('disconnect', () => {
+            console.log('[Socket] Disconnected');
             setState(s => ({
                 ...s,
                 isConnected: false,
