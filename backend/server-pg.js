@@ -51,8 +51,8 @@ const pool = new Pool({
   // Connection pool optimization
   max: 20,                    // Maximum connections
   idleTimeoutMillis: 30000,   // Close idle connections after 30s
-  connectionTimeoutMillis: 5000, // Connection timeout 5s
-  statement_timeout: 10000,   // Query timeout 10s
+  connectionTimeoutMillis: 30000, // Connection timeout 30s (increased for Neon)
+  statement_timeout: 30000,   // Query timeout 30s (increased for Neon)
 });
 
 pool.on('error', (err) => {
@@ -99,9 +99,15 @@ async function initializeDatabase() {
         balance_before DECIMAL(10, 2) NOT NULL,
         balance_after DECIMAL(10, 2) NOT NULL,
         description TEXT,
+        terminal_id VARCHAR(255) DEFAULT 'nexora_sonia',
         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (uid) REFERENCES cards(uid)
       )
+    `);
+
+    // Add terminal_id column if it doesn't exist (for existing DBs)
+    await pool.query(`
+      ALTER TABLE transactions ADD COLUMN IF NOT EXISTS terminal_id VARCHAR(255) DEFAULT 'nexora_sonia'
     `);
 
     console.log('✓ Database tables initialized');
@@ -423,8 +429,8 @@ app.post('/topup', authenticateToken, authorizeRole(['admin', 'user']), async (r
 
     // Create transaction record
     await pool.query(
-      'INSERT INTO transactions (uid, holder_name, type, amount, balance_before, balance_after, description) VALUES ($1, $2, $3, $4, $5, $6, $7)',
-      [uid, cardData.holder_name, 'topup', amount, balanceBefore, parseFloat(cardData.balance), `Top-up of ${amount.toFixed(2)}`]
+      'INSERT INTO transactions (uid, holder_name, type, amount, balance_before, balance_after, description, terminal_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
+      [uid, cardData.holder_name, 'topup', amount, balanceBefore, parseFloat(cardData.balance), `Top-up of ${amount.toFixed(2)}`, TEAM_ID]
     );
 
     // Publish to MQTT
@@ -518,8 +524,8 @@ app.post('/pay', authenticateToken, authorizeRole(['admin', 'user']), async (req
     const cardData = updatedCard.rows[0];
 
     await pool.query(
-      'INSERT INTO transactions (uid, holder_name, type, amount, balance_before, balance_after, description) VALUES ($1, $2, $3, $4, $5, $6, $7)',
-      [uid, cardData.holder_name, 'debit', payAmount, balanceBefore, parseFloat(cardData.balance), payDescription]
+      'INSERT INTO transactions (uid, holder_name, type, amount, balance_before, balance_after, description, terminal_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
+      [uid, cardData.holder_name, 'debit', payAmount, balanceBefore, parseFloat(cardData.balance), payDescription, TEAM_ID]
     );
 
     const payload = JSON.stringify({
@@ -543,6 +549,13 @@ app.post('/pay', authenticateToken, authorizeRole(['admin', 'user']), async (req
     res.json({
       success: true,
       message: 'Payment successful',
+      transaction: {
+        amount: payAmount,
+        description: payDescription,
+        balanceBefore,
+        balanceAfter: parseFloat(cardData.balance),
+        terminalId: TEAM_ID,
+      },
       card: {
         uid: cardData.uid,
         holderName: cardData.holder_name,
@@ -609,6 +622,7 @@ app.get('/transactions/:uid', authenticateToken, async (req, res) => {
       amount: parseFloat(tx.amount),
       balanceAfter: parseFloat(tx.balance_after),
       description: tx.description,
+      terminalId: tx.terminal_id,
       timestamp: tx.timestamp
     }));
     res.json(transactions);
@@ -633,6 +647,7 @@ app.get('/transactions', authenticateToken, authorizeRole(['admin']), async (req
       amount: parseFloat(tx.amount),
       balanceAfter: parseFloat(tx.balance_after),
       description: tx.description,
+      terminalId: tx.terminal_id,
       timestamp: tx.timestamp
     }));
     res.json(transactions);
