@@ -2,6 +2,21 @@ import React, { createContext, useContext, useEffect, useRef, useState, useCallb
 import { io, Socket } from 'socket.io-client';
 import { BACKEND_URL } from '../config';
 
+// Token storage
+let authToken: string | null = null;
+
+export function getAuthToken() {
+  return authToken;
+}
+
+export function setAuthToken(token: string | null) {
+  authToken = token;
+}
+
+function authHeaders(): Record<string, string> {
+  return authToken ? { 'Authorization': `Bearer ${authToken}` } : {};
+}
+
 // Types
 export interface CardData {
     uid: string;
@@ -31,6 +46,7 @@ export interface Transaction {
     balanceAfter: number;
     description: string;
     holderName: string;
+    terminalId: string;
     timestamp: string;
 }
 
@@ -89,6 +105,7 @@ interface AppContextType extends AppState {
     refreshStats: () => Promise<void>;
     refreshHistory: () => Promise<void>;
     refreshProducts: () => Promise<void>;
+    refreshAll: (role?: 'admin' | 'user') => Promise<void>;
 }
 
 const AppContext = createContext<AppContextType | null>(null);
@@ -141,8 +158,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     // Load products
     const refreshProducts = useCallback(async () => {
+        if (!authToken) return;
         try {
-            const res = await fetch(`${BACKEND_URL}/products`);
+            const res = await fetch(`${BACKEND_URL}/products`, {
+                headers: authHeaders(),
+            });
             if (res.ok) {
                 const data = await res.json();
                 setState(s => ({ ...s, products: data }));
@@ -165,10 +185,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }
     }, []);
 
-    // Load stats
+    // Load stats (admin only — skipped for user role)
     const refreshStats = useCallback(async () => {
+        if (!authToken || state.userRole !== 'admin') return;
         try {
-            const cardsRes = await fetch(`${BACKEND_URL}/cards`);
+            const cardsRes = await fetch(`${BACKEND_URL}/cards`, { headers: authHeaders() });
             if (cardsRes.ok) {
                 const cards = await cardsRes.json();
                 const netBal = cards.reduce((sum: number, c: any) => sum + c.balance, 0);
@@ -180,7 +201,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
                 }));
             }
 
-            const txRes = await fetch(`${BACKEND_URL}/transactions?limit=1000`);
+            const txRes = await fetch(`${BACKEND_URL}/transactions?limit=1000`, { headers: authHeaders() });
             if (txRes.ok) {
                 const transactions = await txRes.json();
                 const today = new Date().toDateString();
@@ -204,18 +225,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             console.error('Failed to load stats:', err);
             setState(s => ({ ...s, dbStatus: false }));
         }
-    }, []);
+    }, [state.userRole]);
 
     // Load transaction history
     const refreshHistory = useCallback(async () => {
+        if (!authToken) {
+            console.warn('refreshHistory: no auth token, skipping');
+            return;
+        }
         try {
-            let url = `${BACKEND_URL}/transactions?limit=100`;
+            let url: string;
             if (state.lastScannedUid) {
                 url = `${BACKEND_URL}/transactions/${state.lastScannedUid}`;
+            } else if (state.userRole === 'admin') {
+                url = `${BACKEND_URL}/transactions?limit=100`;
+            } else {
+                // user role with no card scanned — nothing to fetch yet
+                return;
             }
 
-            const res = await fetch(url);
-            if (!res.ok) throw new Error('Failed to fetch');
+            const res = await fetch(url, { headers: authHeaders() });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
             const transactions: Transaction[] = await res.json();
             const topups = transactions.filter(tx => tx.type === 'topup');
@@ -230,7 +260,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         } catch (err) {
             console.error('Failed to load history:', err);
         }
-    }, [state.lastScannedUid]);
+    }, [state.lastScannedUid, state.userRole]);
 
     // Socket setup
     useEffect(() => {
@@ -244,9 +274,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
                 backendStatus: true,
                 mqttStatus: true,
             }));
-            refreshStats();
-            refreshProducts();
-            refreshHistory();
+            // Only fetch data if we have a token (post-login)
+            if (authToken) {
+                refreshStats();
+                refreshProducts();
+                refreshHistory();
+            }
         });
 
         socket.on('disconnect', () => {
@@ -269,7 +302,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             }
 
             try {
-                const res = await fetch(`${BACKEND_URL}/card/${uid}`);
+                const res = await fetch(`${BACKEND_URL}/card/${uid}`, {
+                    headers: authHeaders(),
+                });
                 if (res.ok) {
                     const cardData: CardData = await res.json();
                     setState(s => ({
@@ -415,6 +450,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }, []);
 
     const logout = useCallback(() => {
+        setAuthToken(null);
         setState(s => ({
             ...s,
             userRole: null,
@@ -442,7 +478,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
             const res = await fetch(`${BACKEND_URL}/topup`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', ...authHeaders() },
                 body: JSON.stringify(body),
             });
 
@@ -468,7 +504,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
             const res = await fetch(`${BACKEND_URL}/pay`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', ...authHeaders() },
                 body: JSON.stringify(body),
             });
 
@@ -490,7 +526,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const setPasscode = useCallback(async (uid: string, passcode: string) => {
         const res = await fetch(`${BACKEND_URL}/card/${uid}/set-passcode`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
             body: JSON.stringify({ passcode }),
         });
 
@@ -503,6 +539,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }
         return result;
     }, []);
+
+    const refreshAll = useCallback(async (role?: 'admin' | 'user') => {
+        const effectiveRole = role ?? state.userRole;
+        const promises: Promise<void>[] = [refreshProducts()];
+        // Only fetch history if there's a scanned UID or role is admin
+        if (effectiveRole === 'admin' || state.lastScannedUid) {
+            promises.push(refreshHistory());
+        }
+        if (effectiveRole === 'admin') {
+            promises.push(refreshStats());
+        }
+        await Promise.all(promises);
+    }, [refreshStats, refreshProducts, refreshHistory, state.userRole, state.lastScannedUid]);
 
     const value: AppContextType = {
         ...state,
@@ -522,6 +571,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         refreshStats,
         refreshHistory,
         refreshProducts,
+        refreshAll,
     };
 
     return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
