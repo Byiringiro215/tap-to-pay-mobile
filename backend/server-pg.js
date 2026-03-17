@@ -51,8 +51,8 @@ const pool = new Pool({
   // Connection pool optimization
   max: 20,                    // Maximum connections
   idleTimeoutMillis: 30000,   // Close idle connections after 30s
-  connectionTimeoutMillis: 5000, // Connection timeout 5s
-  statement_timeout: 10000,   // Query timeout 10s
+  connectionTimeoutMillis: 30000, // Connection timeout 30s (increased for Neon)
+  statement_timeout: 30000,   // Query timeout 30s (increased for Neon)
 });
 
 pool.on('error', (err) => {
