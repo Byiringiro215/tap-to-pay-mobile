@@ -104,7 +104,7 @@ export function MarketplaceScreen() {
             const result = await checkout(lastScannedUid, cartTotal, description, passcode);
             if (result.success) {
                 setPaymentMsg({
-                    text: `✅ Payment of $${result.transaction.amount.toFixed(2)} successful! Balance: $${result.card.balance.toFixed(2)}`,
+                    text: `✅ Payment of $${(result.transaction?.amount ?? cartTotal).toFixed(2)} successful! Balance: $${result.card.balance.toFixed(2)}`,
                     type: 'success',
                 });
             } else {

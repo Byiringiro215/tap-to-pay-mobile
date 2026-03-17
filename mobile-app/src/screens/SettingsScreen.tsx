@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React from 'react';
 import { View, Text, StyleSheet, ScrollView, RefreshControl, TouchableOpacity, Alert } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, borderRadius, spacing, fontSize } from '../theme';
@@ -72,10 +72,6 @@ export function SettingsScreen() {
             },
         ]);
     };
-
-    useEffect(() => {
-        refreshStats();
-    }, []);
 
     return (
         <ScrollView
@@ -165,22 +161,22 @@ export function SettingsScreen() {
 
             {/* System Information */}
             <GlassCard title="🖥️ System Information" style={{ marginTop: spacing.xl }}>
-                <InfoRow label="Application" value="RFID Dashboard" />
+                <InfoRow label="Application" value="RFID Tap & Pay" />
                 <InfoRow label="Version" value="1.2.0" />
-                <InfoRow label="Team ID" value="team_rdf" badge />
+                <InfoRow label="Team ID" value="nexora_sonia" badge />
                 <InfoRow label="Backend URL" value={BACKEND_URL} mono />
-                <InfoRow label="MQTT Broker" value="broker.benax.rw:1883" mono />
-                <InfoRow label="Database" value="MongoDB Atlas" mono />
-                <InfoRow label="WebSocket" value="Socket.IO v4.7.2" mono />
+                <InfoRow label="MQTT Broker" value="157.173.101.159:1883" mono />
+                <InfoRow label="Database" value="PostgreSQL (tap-and-pay)" mono />
+                <InfoRow label="WebSocket" value="Socket.IO" mono />
             </GlassCard>
 
             {/* MQTT Topics */}
             <GlassCard title="📡 MQTT Topics" style={{ marginTop: spacing.xl }}>
-                <InfoRow label="Card Status" value="rfid/team_rdf/card/status" mono />
-                <InfoRow label="Card Balance" value="rfid/team_rdf/card/balance" mono />
-                <InfoRow label="Top-Up" value="rfid/team_rdf/card/topup" mono />
-                <InfoRow label="Payment" value="rfid/team_rdf/card/payment" mono />
-                <InfoRow label="Topic Prefix" value="rfid/team_rdf/" badge />
+                <InfoRow label="Card Status" value="rfid/nexora_sonia/card/status" mono />
+                <InfoRow label="Card Balance" value="rfid/nexora_sonia/card/balance" mono />
+                <InfoRow label="Top-Up" value="rfid/nexora_sonia/card/topup" mono />
+                <InfoRow label="Payment" value="rfid/nexora_sonia/card/payment" mono />
+                <InfoRow label="Topic Prefix" value="rfid/nexora_sonia/" badge />
             </GlassCard>
 
             {/* Logout Button */}
