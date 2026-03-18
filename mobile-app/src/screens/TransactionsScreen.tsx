@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, RefreshControl, TouchableOpacity } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, borderRadius, spacing, fontSize } from '../theme';
@@ -82,10 +82,6 @@ export function TransactionsScreen() {
         await refreshHistory();
         setRefreshing(false);
     };
-
-    useEffect(() => {
-        refreshHistory();
-    }, []);
 
     const transactions = activeTab === 'topup' ? topupHistory : purchaseHistory;
     const totalPages = Math.ceil(transactions.length / ITEMS_PER_PAGE);
