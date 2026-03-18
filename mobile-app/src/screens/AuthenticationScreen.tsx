@@ -9,7 +9,7 @@ import { BACKEND_URL } from '../config';
 
 interface AuthenticationScreenProps {
     role: 'admin' | 'user';
-    onAuthSuccess: () => void;
+    onAuthSuccess: (role: 'admin' | 'user') => void;
     onBack: () => void;
 }
 
@@ -81,7 +81,7 @@ export function AuthenticationScreen({ role, onAuthSuccess, onBack }: Authentica
                     Alert.alert('Success', `Welcome ${username}!`);
                     setUsername('');
                     setPassword('');
-                    onAuthSuccess();
+                    onAuthSuccess(role);
                 } else {
                     console.log('Step 6: Role mismatch!');
                     console.log(`Expected: ${role}, Got: ${data.user.role}`);

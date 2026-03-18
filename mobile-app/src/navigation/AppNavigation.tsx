@@ -8,6 +8,7 @@ import { TopUpScreen } from '../screens/TopUpScreen';
 import { MarketplaceScreen } from '../screens/MarketplaceScreen';
 import { TransactionsScreen } from '../screens/TransactionsScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
+import { DashboardScreen } from '../screens/DashboardScreen';
 
 const Tab = createBottomTabNavigator();
 
@@ -47,43 +48,86 @@ export function AppNavigation() {
                     tabBarActiveTintColor: colors.primary,
                     tabBarInactiveTintColor: colors.textMuted,
                 }}>
-                <Tab.Screen
-                    name="TopUp"
-                    component={TopUpScreen}
-                    options={{
-                        tabBarIcon: ({ focused }) => (
-                            <TabIcon icon="💳" label="Top Up" focused={focused} />
-                        ),
-                    }}
-                />
-                <Tab.Screen
-                    name="Marketplace"
-                    component={MarketplaceScreen}
-                    options={{
-                        tabBarIcon: ({ focused }) => (
-                            <TabIcon icon="🛒" label="Shop" focused={focused} />
-                        ),
-                    }}
-                />
-                <Tab.Screen
-                    name="Transactions"
-                    component={TransactionsScreen}
-                    options={{
-                        tabBarIcon: ({ focused }) => (
-                            <TabIcon icon="📊" label="History" focused={focused} />
-                        ),
-                    }}
-                />
-                {userRole === 'admin' && (
-                    <Tab.Screen
-                        name="Settings"
-                        component={SettingsScreen}
-                        options={{
-                            tabBarIcon: ({ focused }) => (
-                                <TabIcon icon="⚙️" label="Settings" focused={focused} />
-                            ),
-                        }}
-                    />
+                {userRole === 'admin' ? (
+                    // Admin: Top Up, Shop, History, Settings
+                    <>
+                        <Tab.Screen
+                            name="TopUp"
+                            component={TopUpScreen}
+                            options={{
+                                tabBarIcon: ({ focused }) => (
+                                    <TabIcon icon="💳" label="Top Up" focused={focused} />
+                                ),
+                            }}
+                        />
+                        <Tab.Screen
+                            name="Marketplace"
+                            component={MarketplaceScreen}
+                            options={{
+                                tabBarIcon: ({ focused }) => (
+                                    <TabIcon icon="🛒" label="Shop" focused={focused} />
+                                ),
+                            }}
+                        />
+                        <Tab.Screen
+                            name="Transactions"
+                            component={TransactionsScreen}
+                            options={{
+                                tabBarIcon: ({ focused }) => (
+                                    <TabIcon icon="📊" label="History" focused={focused} />
+                                ),
+                            }}
+                        />
+                        <Tab.Screen
+                            name="Settings"
+                            component={SettingsScreen}
+                            options={{
+                                tabBarIcon: ({ focused }) => (
+                                    <TabIcon icon="⚙️" label="Settings" focused={focused} />
+                                ),
+                            }}
+                        />
+                    </>
+                ) : (
+                    // User: Dashboard, Top Up, Shop, History
+                    <>
+                        <Tab.Screen
+                            name="Dashboard"
+                            component={DashboardScreen}
+                            options={{
+                                tabBarIcon: ({ focused }) => (
+                                    <TabIcon icon="📈" label="Dashboard" focused={focused} />
+                                ),
+                            }}
+                        />
+                        <Tab.Screen
+                            name="TopUp"
+                            component={TopUpScreen}
+                            options={{
+                                tabBarIcon: ({ focused }) => (
+                                    <TabIcon icon="💳" label="Top Up" focused={focused} />
+                                ),
+                            }}
+                        />
+                        <Tab.Screen
+                            name="Marketplace"
+                            component={MarketplaceScreen}
+                            options={{
+                                tabBarIcon: ({ focused }) => (
+                                    <TabIcon icon="🛒" label="Shop" focused={focused} />
+                                ),
+                            }}
+                        />
+                        <Tab.Screen
+                            name="Transactions"
+                            component={TransactionsScreen}
+                            options={{
+                                tabBarIcon: ({ focused }) => (
+                                    <TabIcon icon="📊" label="History" focused={focused} />
+                                ),
+                            }}
+                        />
+                    </>
                 )}
             </Tab.Navigator>
 
