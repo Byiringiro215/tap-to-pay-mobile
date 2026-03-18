@@ -40,11 +40,11 @@ async function migrate() {
       holder_name VARCHAR(255) NOT NULL, type VARCHAR(50) NOT NULL,
       amount DECIMAL(10,2) NOT NULL, balance_before DECIMAL(10,2) NOT NULL,
       balance_after DECIMAL(10,2) NOT NULL, description TEXT,
-      terminal_id VARCHAR(255) DEFAULT 'nexora_sonia',
+      terminal_id VARCHAR(255) DEFAULT 'its_ace',
       timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (uid) REFERENCES cards(uid)
     )`);
-  await neon.query(`ALTER TABLE transactions ADD COLUMN IF NOT EXISTS terminal_id VARCHAR(255) DEFAULT 'nexora_sonia'`);
+  await neon.query(`ALTER TABLE transactions ADD COLUMN IF NOT EXISTS terminal_id VARCHAR(255) DEFAULT 'its_ace'`);
   console.log('✓ Tables created on Neon');
 
   // Migrate users
@@ -76,7 +76,7 @@ async function migrate() {
     await neon.query(
       `INSERT INTO transactions (uid, holder_name, type, amount, balance_before, balance_after, description, terminal_id, timestamp)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT DO NOTHING`,
-      [t.uid, t.holder_name, t.type, t.amount, t.balance_before, t.balance_after, t.description, t.terminal_id || 'nexora_sonia', t.timestamp]
+      [t.uid, t.holder_name, t.type, t.amount, t.balance_before, t.balance_after, t.description, t.terminal_id || 'its_ace', t.timestamp]
     );
   }
   console.log(`✓ Migrated ${txs.rows.length} transactions`);

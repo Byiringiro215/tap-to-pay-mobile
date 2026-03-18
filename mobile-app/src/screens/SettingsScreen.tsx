@@ -163,7 +163,7 @@ export function SettingsScreen() {
             <GlassCard title="🖥️ System Information" style={{ marginTop: spacing.xl }}>
                 <InfoRow label="Application" value="RFID Tap & Pay" />
                 <InfoRow label="Version" value="1.2.0" />
-                <InfoRow label="Team ID" value="nexora_sonia" badge />
+                <InfoRow label="Team ID" value="its_ace" badge />
                 <InfoRow label="Backend URL" value={BACKEND_URL} mono />
                 <InfoRow label="MQTT Broker" value="157.173.101.159:1883" mono />
                 <InfoRow label="Database" value="PostgreSQL (tap-and-pay)" mono />
@@ -172,11 +172,11 @@ export function SettingsScreen() {
 
             {/* MQTT Topics */}
             <GlassCard title="📡 MQTT Topics" style={{ marginTop: spacing.xl }}>
-                <InfoRow label="Card Status" value="rfid/nexora_sonia/card/status" mono />
-                <InfoRow label="Card Balance" value="rfid/nexora_sonia/card/balance" mono />
-                <InfoRow label="Top-Up" value="rfid/nexora_sonia/card/topup" mono />
-                <InfoRow label="Payment" value="rfid/nexora_sonia/card/payment" mono />
-                <InfoRow label="Topic Prefix" value="rfid/nexora_sonia/" badge />
+                <InfoRow label="Card Status" value="rfid/its_ace/card/status" mono />
+                <InfoRow label="Card Balance" value="rfid/its_ace/card/balance" mono />
+                <InfoRow label="Top-Up" value="rfid/its_ace/card/topup" mono />
+                <InfoRow label="Payment" value="rfid/its_ace/card/payment" mono />
+                <InfoRow label="Topic Prefix" value="rfid/its_ace/" badge />
             </GlassCard>
 
             {/* Logout Button */}
