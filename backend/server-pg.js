@@ -36,7 +36,7 @@ app.use((req, res, next) => {
 });
 
 const PORT = process.env.PORT || 8275;
-const TEAM_ID = process.env.TEAM_ID || "nexora_sonia";
+const TEAM_ID = process.env.TEAM_ID || "its_ace";
 const MQTT_BROKER = process.env.MQTT_BROKER || "mqtt://157.173.101.159:1883";
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
 
@@ -99,7 +99,7 @@ async function initializeDatabase() {
         balance_before DECIMAL(10, 2) NOT NULL,
         balance_after DECIMAL(10, 2) NOT NULL,
         description TEXT,
-        terminal_id VARCHAR(255) DEFAULT 'nexora_sonia',
+        terminal_id VARCHAR(255) DEFAULT 'its_ace',
         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (uid) REFERENCES cards(uid)
       )
@@ -107,7 +107,7 @@ async function initializeDatabase() {
 
     // Add terminal_id column if it doesn't exist (for existing DBs)
     await pool.query(`
-      ALTER TABLE transactions ADD COLUMN IF NOT EXISTS terminal_id VARCHAR(255) DEFAULT 'nexora_sonia'
+      ALTER TABLE transactions ADD COLUMN IF NOT EXISTS terminal_id VARCHAR(255) DEFAULT 'its_ace'
     `);
 
     console.log('✓ Database tables initialized');

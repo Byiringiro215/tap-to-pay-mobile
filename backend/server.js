@@ -21,7 +21,7 @@ app.use(cors());
 app.use(express.json());
 
 const PORT = 8275;
-const TEAM_ID = "nexora_sonia";
+const TEAM_ID = "its_ace";
 const MQTT_BROKER = "mqtt://157.173.101.159:1883";
 const MONGO_URI = process.env.MONGODB_URI;
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
