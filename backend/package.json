@@ -5,8 +5,8 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "nodemon server-pg.js",
-    "start": "node server-pg.js"
+    "dev": "node init && nodemon server-pg.js",
+    "start": "node init && node server-pg.js"
   },
   "keywords": [],
   "author": "",
